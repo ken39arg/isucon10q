@@ -1,0 +1,17 @@
+version: '3.7'
+services:
+  s1:
+    build: ./isus
+    image: isus
+    ports:
+      - "12201:22"
+  s2:
+    build: ./isus
+    image: isus
+    ports:
+      - "12202:22"
+  s3:
+    build: ./isus
+    image: isus
+    ports:
+      - "12203:22"
