@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 	&& echo 'root:screencast' | chpasswd \
 	&& mkdir -p /var/run/sshd
 
-RUN useradd isucon \
+RUN useradd -m isucon \
 	&& echo 'isucon:isucon' | chpasswd \
 	&& usermod -aG sudo isucon \
 	&& mkdir -p /home/isucon/.ssh \
