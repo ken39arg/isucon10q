@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"fmt"
 	"log"
+	"runtime"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -34,9 +36,9 @@ func registerMysqlProxy(name string) {
 			elapsed := time.Since(start.(time.Time))
 			switch {
 			case err != nil || elapsed > time.Second:
-				log.Printf("[SQL Trace] Err: %s, Query: %s; args: %v, elapsed: %s", err, stmt.QueryString, args, elapsed)
+				log.Printf("[SQL Trace] Err: %s, Query: %s; args: %v, elapsed: %s, callers: %v", err, stmt.QueryString, args, elapsed, getCaller())
 			case traceSQL:
-				log.Printf("[SQL Trace] Query: %s; args: %v, elapsed: %s", stmt.QueryString, args, elapsed)
+				log.Printf("[SQL Trace] Query: %s; args: %v, elapsed: %s, callers: %v", stmt.QueryString, args, elapsed, getCaller())
 			}
 			return nil
 		},
@@ -47,11 +49,24 @@ func registerMysqlProxy(name string) {
 			elapsed := time.Since(start.(time.Time))
 			switch {
 			case err != nil || elapsed > time.Second:
-				log.Printf("[SQL Trace] Err: %s, Query: %s; args: %v, elapsed: %s", err, stmt.QueryString, args, elapsed)
+				log.Printf("[SQL Trace] Err: %s, Query: %s; args: %v, elapsed: %s, callers: %v", err, stmt.QueryString, args, elapsed, getCaller())
 			case traceSQL:
-				log.Printf("[SQL Trace] Query: %s; args: %v, elapsed: %s", stmt.QueryString, args, elapsed)
+				log.Printf("[SQL Trace] Query: %s; args: %v, elapsed: %s, callers: %v", stmt.QueryString, args, elapsed, getCaller())
 			}
 			return nil
 		},
 	}))
+}
+
+func getCaller() []string {
+	skip, size := 3, 3
+	callers := make([]string, 0, size)
+	for i := 0; i < 5; i++ {
+		_, file, line, ok := runtime.Caller(skip + i)
+		if !ok {
+			break
+		}
+		callers = append(callers, fmt.Sprintf("%s:%d", file, line))
+	}
+	return callers
 }
