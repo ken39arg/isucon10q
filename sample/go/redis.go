@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 
 	"github.com/go-redis/redis/v8"
@@ -23,4 +24,12 @@ func initRedis() {
 			// PoolSize: 10, // default 10
 		})
 	})
+}
+
+func pubSubSub(ctx context.Context, key string, cb func(payload string)) {
+	sub := rdb.Subscribe(ctx, key)
+	ch := sub.Channel()
+	for msg := range ch {
+		cb(msg.Payload)
+	}
 }
