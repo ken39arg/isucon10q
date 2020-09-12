@@ -322,6 +322,7 @@ func initialize(c echo.Context) error {
 	}
 
 	esinitcach()
+	reccomendcachefree()
 	if err := initChilds("isu2:1323", "isu3:1323"); err != nil {
 		c.Logger().Errorf("Initialize children error : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -347,6 +348,7 @@ func initChilds(hosts ...string) error {
 
 func initChildsHandle(c echo.Context) error {
 	esinitcach()
+	reccomendcachefree()
 	return c.JSON(http.StatusOK, map[string]string{})
 }
 
@@ -635,7 +637,7 @@ func getChairSearchCondition(c echo.Context) error {
 
 func getLowPricedChair(c echo.Context) error {
 	var chairs []Chair
-	query := `SELECT * FROM chair FORCE INDEX (stock_price) WHERE stock > 0 ORDER BY price ASC, id ASC LIMIT ?`
+	query := `SELECT * FROM chair WHERE stock > 0 ORDER BY price ASC, id ASC LIMIT ?`
 	err := db.Select(&chairs, query, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -744,6 +746,7 @@ func postEstate(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 	esinitcach()
+	reccomendcachefree()
 	return c.NoContent(http.StatusCreated)
 }
 
@@ -900,6 +903,15 @@ func getLowPricedEstate(c echo.Context) error {
 	return jsonSpeed(c, http.StatusOK, EstateListResponse{Estates: estates})
 }
 
+var (
+	reccomendcache  map[int]EstateListResponse
+	recommendedLock sync.RWMutex
+)
+
+func reccomendcachefree() {
+	reccomendcache = make(map[int]EstateListResponse, 1000)
+}
+
 func searchRecommendedEstateWithChair(c echo.Context) error {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -907,8 +919,18 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
+	recommendedLock.RLock()
+	if res, ok := reccomendcache[id]; ok {
+		recommendedLock.RUnlock()
+		return jsonSpeed(c, http.StatusOK, res)
+	}
+	recommendedLock.RUnlock()
+
+	recommendedLock.Lock()
+	defer recommendedLock.Unlock()
+
 	chair := Chair{}
-	query := `SELECT * FROM chair WHERE id = ?`
+	query := `SELECT id, width, height, depth FROM chair WHERE id = ?`
 	err = db.Get(&chair, query, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -923,7 +945,13 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 	w := chair.Width
 	h := chair.Height
 	d := chair.Depth
-	query = `SELECT * FROM estate WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
+	query = `SELECT * FROM estate WHERE (door_width >= ? AND door_height >= ?) ` +
+		`OR (door_width >= ? AND door_height >= ?) ` +
+		`OR (door_width >= ? AND door_height >= ?) ` +
+		`OR (door_width >= ? AND door_height >= ?) ` +
+		`OR (door_width >= ? AND door_height >= ?) ` +
+		`OR (door_width >= ? AND door_height >= ?) ` +
+		`ORDER BY popularity DESC, id ASC LIMIT ?`
 	err = db.Select(&estates, query, w, h, w, d, h, w, h, d, d, w, d, h, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -933,7 +961,10 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return jsonSpeed(c, http.StatusOK, EstateListResponse{Estates: estates})
+	res := EstateListResponse{Estates: estates}
+	reccomendcache[id] = res
+
+	return jsonSpeed(c, http.StatusOK, res)
 }
 
 func searchEstateNazotte(c echo.Context) error {

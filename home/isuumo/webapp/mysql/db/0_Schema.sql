@@ -43,5 +43,6 @@ CREATE TABLE isuumo.chair
     index height_stock_popularity (height, stock, popularity),
     index width_stock_popularity (width, stock, popularity),
     INDEX price_stock_popularity (price, stock, popularity),
+    INDEX price (price),
     INDEX stock_price (stock, price)
 );
