@@ -7,7 +7,7 @@ ACCESSLOG=/var/log/nginx/access.log
 cp ${ACCESSLOG} ${LOGDIR}/${ID}/access.log
 cp /dev/null ${ACCESSLOG}
 
-SLOWLOG=/var/log/slow.log
+SLOWLOG=/var/log/mysql/slow.log
 cp ${SLOWLOG} ${LOGDIR}/${ID}/slow.log
 cp /dev/null ${SLOWLOG}
 
