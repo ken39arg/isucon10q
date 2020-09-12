@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
@@ -200,7 +202,7 @@ func (r *RecordMapper) Err() error {
 
 func NewMySQLConnectionEnv() *MySQLConnectionEnv {
 	return &MySQLConnectionEnv{
-		Host:     getEnv("MYSQL_HOST", "127.0.0.1"),
+		Host:     getEnv("MYSQL_HOST", "isu1"),
 		Port:     getEnv("MYSQL_PORT", "3306"),
 		User:     getEnv("MYSQL_USER", "isucon"),
 		DBName:   getEnv("MYSQL_DBNAME", "isuumo"),
@@ -219,6 +221,7 @@ func getEnv(key, defaultValue string) string {
 //ConnectDB isuumoデータベースに接続する
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
 	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
+	log.Printf("dsn: %s", dsn)
 	return sqlx.Open("mysql", dsn)
 }
 
@@ -250,6 +253,7 @@ func main() {
 
 	// Initialize
 	e.POST("/initialize", initialize)
+	e.POST("/initializeChild", initChildsHandle)
 
 	// Chair Handler
 	e.GET("/api/chair/:id", getChairDetail)
@@ -285,6 +289,7 @@ func main() {
 }
 
 func initialize(c echo.Context) error {
+	c.Logger().Infof("version: 1.0.1")
 	sqlDir := filepath.Join("..", "mysql", "db")
 	paths := []string{
 		filepath.Join(sqlDir, "0_Schema.sql"),
@@ -308,9 +313,33 @@ func initialize(c echo.Context) error {
 		}
 	}
 
+	esinitcach()
+	if err := initChilds("isu2:1323", "isu3:1323"); err != nil {
+		c.Logger().Errorf("Initialize children error : %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
 	})
+}
+
+func initChilds(hosts ...string) error {
+	for _, host := range hosts {
+		u := "http://" + host + "/initializeChild"
+		res, err := http.Post(u, "application/json", nil)
+		if err != nil {
+			return err
+		}
+		io.Copy(ioutil.Discard, res.Body)
+		res.Body.Close()
+	}
+	return nil
+}
+
+func initChildsHandle(c echo.Context) error {
+	esinitcach()
+	return c.JSON(http.StatusOK, map[string]string{})
 }
 
 func getChairDetail(c echo.Context) error {
@@ -356,12 +385,9 @@ func postChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	tx, err := db.Begin()
-	if err != nil {
-		c.Logger().Errorf("failed to begin tx: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
+	query := "INSERT INTO chair(id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock) VALUES "
+	vals := make([]string, 0, 256)
+	args := make([]interface{}, 0, 256)
 	for _, row := range records {
 		rm := RecordMapper{Record: row}
 		id := rm.NextInt()
@@ -381,11 +407,24 @@ func postChair(c echo.Context) error {
 			c.Logger().Errorf("failed to read record: %v", err)
 			return c.NoContent(http.StatusBadRequest)
 		}
-		_, err := tx.Exec("INSERT INTO chair(id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock)
-		if err != nil {
-			c.Logger().Errorf("failed to insert chair: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
+		vals = append(vals, "(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+		args = append(args, id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock)
+		//_, err := tx.Exec("INSERT INTO chair(id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", id, name, description, thumbnail, price, height, width, depth, color, features, kind, popularity, stock)
+	}
+	if len(vals) == 0 {
+		return c.NoContent(http.StatusCreated)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		c.Logger().Errorf("failed to begin tx: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(query+strings.Join(vals, ","), args...)
+	if err != nil {
+		c.Logger().Errorf("failed to insert chair: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
 	}
 	if err := tx.Commit(); err != nil {
 		c.Logger().Errorf("failed to commit tx: %v", err)
@@ -588,7 +627,7 @@ func getChairSearchCondition(c echo.Context) error {
 
 func getLowPricedChair(c echo.Context) error {
 	var chairs []Chair
-	query := `SELECT * FROM chair WHERE stock > 0 ORDER BY price ASC, id ASC LIMIT ?`
+	query := `SELECT * FROM chair FORCE INDEX (stock_price) WHERE stock > 0 ORDER BY price ASC, id ASC LIMIT ?`
 	err := db.Select(&chairs, query, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -654,12 +693,9 @@ func postEstate(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	tx, err := db.Begin()
-	if err != nil {
-		c.Logger().Errorf("failed to begin tx: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
+	// TODO: bulk insert
+	vals := make([]string, 0, 256)
+	args := make([]interface{}, 0, 256)
 	for _, row := range records {
 		rm := RecordMapper{Record: row}
 		id := rm.NextInt()
@@ -678,22 +714,60 @@ func postEstate(c echo.Context) error {
 			c.Logger().Errorf("failed to read record: %v", err)
 			return c.NoContent(http.StatusBadRequest)
 		}
-		_, err := tx.Exec("INSERT INTO estate(id, name, description, thumbnail, address, latitude, longitude, rent, door_height, door_width, features, popularity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", id, name, description, thumbnail, address, latitude, longitude, rent, doorHeight, doorWidth, features, popularity)
-		if err != nil {
-			c.Logger().Errorf("failed to insert estate: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
+		vals = append(vals, "(?,?,?,?,?,?,?,?,?,?,?,?)")
+		args = append(args, id, name, description, thumbnail, address, latitude, longitude, rent, doorHeight, doorWidth, features, popularity)
+	}
+	if len(vals) == 0 {
+		return c.NoContent(http.StatusCreated)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		c.Logger().Errorf("failed to begin tx: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec("INSERT INTO estate(id, name, description, thumbnail, address, latitude, longitude, rent, door_height, door_width, features, popularity) VALUES"+strings.Join(vals, ","), args...)
+	if err != nil {
+		c.Logger().Errorf("failed to insert estate: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
 	}
 	if err := tx.Commit(); err != nil {
 		c.Logger().Errorf("failed to commit tx: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+	esinitcach()
 	return c.NoContent(http.StatusCreated)
+}
+
+var (
+	escachedata map[string]EstateSearchResponse
+	escachelock *sync.RWMutex
+)
+
+func esinitcach() {
+	escachelock = new(sync.RWMutex)
+	escachedata = make(map[string]EstateSearchResponse, 1000)
 }
 
 func searchEstates(c echo.Context) error {
 	conditions := make([]string, 0)
 	params := make([]interface{}, 0)
+
+	key := strings.Join([]string{
+		c.QueryParam("doorHeightRangeId"),
+		c.QueryParam("doorWidthRangeId"),
+		c.QueryParam("rentRangeId"),
+		c.QueryParam("features"),
+		c.QueryParam("page"),
+		c.QueryParam("perPage`"),
+	}, "_")
+
+	escachelock.RLock()
+	if res, ok := escachedata[key]; ok {
+		escachelock.RUnlock()
+		return c.JSON(http.StatusOK, res)
+	}
+	escachelock.RUnlock()
 
 	if c.QueryParam("doorHeightRangeId") != "" {
 		doorHeight, err := getRange(estateSearchCondition.DoorHeight, c.QueryParam("doorHeightRangeId"))
@@ -795,6 +869,10 @@ func searchEstates(c echo.Context) error {
 
 	res.Estates = estates
 
+	escachelock.Lock()
+	escachedata[key] = res
+	escachelock.Unlock()
+
 	return c.JSON(http.StatusOK, res)
 }
 
@@ -864,7 +942,7 @@ func searchEstateNazotte(c echo.Context) error {
 
 	b := coordinates.getBoundingBox()
 	estatesInBoundingBox := []Estate{}
-	query := `SELECT * FROM estate WHERE latitude <= ? AND latitude >= ? AND longitude <= ? AND longitude >= ? ORDER BY popularity DESC, id ASC`
+	query := `SELECT * FROM estate force index (latitude_longitude_popularity) WHERE latitude <= ? AND latitude >= ? AND longitude <= ? AND longitude >= ? ORDER BY popularity DESC, id ASC`
 	err = db.Select(&estatesInBoundingBox, query, b.BottomRightCorner.Latitude, b.TopLeftCorner.Latitude, b.BottomRightCorner.Longitude, b.TopLeftCorner.Longitude)
 	if err == sql.ErrNoRows {
 		c.Echo().Logger.Infof("select * from estate where latitude ...", err)
