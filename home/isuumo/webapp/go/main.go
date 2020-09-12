@@ -7,7 +7,8 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	_ "net/http/pprof"
+
+	//_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -245,13 +246,13 @@ func init() {
 }
 
 func main() {
-	go func() {
-		http.ListenAndServe("localhost:6060", nil)
-	}()
+	// go func() {
+	// 	http.ListenAndServe("localhost:6060", nil)
+	// }()
 	// Echo instance
 	e := echo.New()
 	e.Debug = true
-	e.Logger.SetLevel(log.DEBUG)
+	e.Logger.SetLevel(log.WARN)
 
 	// Middleware
 	e.Use(middleware.Logger())
@@ -286,7 +287,7 @@ func main() {
 	if err != nil {
 		e.Logger.Fatalf("DB connection failed : %v", err)
 	}
-	db.SetMaxOpenConns(50)
+	db.SetMaxOpenConns(100)
 	db.SetMaxIdleConns(50)
 	db.SetConnMaxLifetime(65 * time.Second)
 	defer db.Close()
