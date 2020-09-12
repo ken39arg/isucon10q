@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/goccy/go-json"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
@@ -371,7 +372,7 @@ func getChairDetail(c echo.Context) error {
 		return c.NoContent(http.StatusNotFound)
 	}
 
-	return c.JSON(http.StatusOK, chair)
+	return jsonSpeed(c, http.StatusOK, chair)
 }
 
 func postChair(c echo.Context) error {
@@ -573,7 +574,7 @@ func searchChairs(c echo.Context) error {
 
 	res.Chairs = chairs
 
-	return c.JSON(http.StatusOK, res)
+	return jsonSpeed(c, http.StatusOK, res)
 }
 
 func buyChair(c echo.Context) error {
@@ -629,7 +630,7 @@ func buyChair(c echo.Context) error {
 }
 
 func getChairSearchCondition(c echo.Context) error {
-	return c.JSON(http.StatusOK, chairSearchCondition)
+	return jsonSpeed(c, http.StatusOK, chairSearchCondition)
 }
 
 func getLowPricedChair(c echo.Context) error {
@@ -645,7 +646,7 @@ func getLowPricedChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return c.JSON(http.StatusOK, ChairListResponse{Chairs: chairs})
+	return jsonSpeed(c, http.StatusOK, ChairListResponse{Chairs: chairs})
 }
 
 func getEstateDetail(c echo.Context) error {
@@ -666,7 +667,7 @@ func getEstateDetail(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return c.JSON(http.StatusOK, estate)
+	return jsonSpeed(c, http.StatusOK, estate)
 }
 
 func getRange(cond RangeCondition, rangeID string) (*Range, error) {
@@ -772,7 +773,7 @@ func searchEstates(c echo.Context) error {
 	escachelock.RLock()
 	if res, ok := escachedata[key]; ok {
 		escachelock.RUnlock()
-		return c.JSON(http.StatusOK, res)
+		return jsonSpeed(c, http.StatusOK, res)
 	}
 	escachelock.RUnlock()
 
@@ -880,7 +881,7 @@ func searchEstates(c echo.Context) error {
 	escachedata[key] = res
 	escachelock.Unlock()
 
-	return c.JSON(http.StatusOK, res)
+	return jsonSpeed(c, http.StatusOK, res)
 }
 
 func getLowPricedEstate(c echo.Context) error {
@@ -896,7 +897,7 @@ func getLowPricedEstate(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return c.JSON(http.StatusOK, EstateListResponse{Estates: estates})
+	return jsonSpeed(c, http.StatusOK, EstateListResponse{Estates: estates})
 }
 
 func searchRecommendedEstateWithChair(c echo.Context) error {
@@ -932,7 +933,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return c.JSON(http.StatusOK, EstateListResponse{Estates: estates})
+	return jsonSpeed(c, http.StatusOK, EstateListResponse{Estates: estates})
 }
 
 func searchEstateNazotte(c echo.Context) error {
@@ -990,7 +991,7 @@ func searchEstateNazotte(c echo.Context) error {
 	// }
 	re.Count = int64(len(re.Estates))
 
-	return c.JSON(http.StatusOK, re)
+	return jsonSpeed(c, http.StatusOK, re)
 }
 
 func postEstateRequestDocument(c echo.Context) error {
@@ -1027,7 +1028,7 @@ func postEstateRequestDocument(c echo.Context) error {
 }
 
 func getEstateSearchCondition(c echo.Context) error {
-	return c.JSON(http.StatusOK, estateSearchCondition)
+	return jsonSpeed(c, http.StatusOK, estateSearchCondition)
 }
 
 func (cs Coordinates) getBoundingBox() BoundingBox {
@@ -1064,4 +1065,13 @@ func (cs Coordinates) coordinatesToText() string {
 		points = append(points, fmt.Sprintf("%f %f", c.Latitude, c.Longitude))
 	}
 	return fmt.Sprintf("'POLYGON((%s))'", strings.Join(points, ","))
+}
+
+func jsonSpeed(c echo.Context, code int, v interface{}) error {
+	r, w := io.Pipe()
+	go func() {
+		json.NewEncoder(w).Encode(v)
+		w.Close()
+	}()
+	return c.Stream(code, echo.MIMEApplicationJSONCharsetUTF8, r)
 }
